@@ -1,0 +1,1090 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOUCH SYMPHONY — Stylesheet
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Organised in sections from top-down:
+     1. Design tokens (CSS custom properties)
+     2. Global resets and body layout grid
+     3. Header
+     4. Stage (canvas area) and overlays
+     5. Panel (sidebar)
+     6. Panel content modules:
+          - Telemetry stat rows
+          - Touch list
+          - Gesture library
+          - Prediction box
+          - Advanced controls
+     7. Buttons and shared form elements
+     8. Modal
+     9. Footer
+     10. Scrollbars
+     11. Sparkline, capability badge, and other atoms
+
+   All colours and fonts go through CSS custom properties (:root variables)
+   so global theme changes only require editing one block at the top.
+
+   Mobile rules live inline with each desktop rule as @media (max-width: 860px)
+   blocks. The 860px breakpoint was chosen because below that width the
+   sidebar panel (320px) consumes too much of the screen to fit comfortably
+   alongside the stage.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+
+/* ─── 1. DESIGN TOKENS ────────────────────────────────────────────────────
+   Colours are deliberately desaturated (charcoals + dim greys) so the mint
+   --accent pops against everything. --warm and --warn are used sparingly
+   for status badges and destructive actions. */
+:root {
+  /* Backgrounds */
+  --bg:         #0a0b0f;  /* Page base */
+  --bg-raised: #12141a;  /* Header, panel, footer */
+  --surface:   #1a1d26;  /* Buttons, inputs, list items */
+  --border:    #242834;  /* Hairlines between sections */
+
+  /* Text */
+  --text:       #e8ebf0;  /* Primary body text */
+  --text-dim:   #8891a3;  /* Labels, secondary text */
+  --text-faint: #4a5062;  /* Captions, inactive states */
+
+  /* Accent palette */
+  --accent:     #7df5c5;  /* Primary mint — used for interactive highlights */
+  --accent-dim: #3a9575;  /* Darker mint for hover/pressed states */
+  --warm:       #f5a67d;  /* Amber — used only for the "no sensor" warning */
+  --warn:       #f57d7d;  /* Red — destructive actions (recording, reset, delete) */
+
+  /* Font families */
+  --mono:    'JetBrains Mono', ui-monospace, monospace;
+  --display: 'Fraunces', Georgia, serif;
+}
+
+
+/* ─── 2. GLOBAL RESETS AND BODY LAYOUT ────────────────────────────────────
+   A universal box-sizing reset and margin/padding zero. */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  /* overflow:hidden prevents accidental page-level scrolling which would
+     compete with canvas drag gestures. The panel handles its own scrolling
+     on mobile via its own overflow-y:auto. */
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  /* touch-action:none stops the browser from handling drags as scrolls or
+     zooms — essential so canvas pointer events receive every movement.
+     The panel re-enables pan-y explicitly on mobile. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/*
+  Body is a CSS Grid container. Desktop layout:
+    +----------------------------+---------+
+    |         header             | header  |
+    +----------------------------+         |
+    |                            |         |
+    |          stage             |  panel  |
+    |                            |         |
+    +----------------------------+         |
+    |         footer             |         |
+    +----------------------------+---------+
+  Column 1 is flexible, column 2 is a fixed 320px sidebar.
+*/
+body {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "header header"
+    "stage  panel"
+    "footer panel";
+  height: 100vh;
+}
+
+/*
+  Mobile layout (single column):
+    +----------+
+    |  header  |
+    +----------+
+    |  stage   |  ← fixed 55vh so the panel is always partially visible
+    +----------+
+    |  panel   |  ← 1fr: fills remaining space, scrolls internally
+    +----------+
+    |  footer  |
+    +----------+
+  The "1fr" row for panel is critical: without it the panel would expand
+  to its content height and get clipped by body's overflow:hidden. With
+  it, the panel fills remaining space and handles scrolling internally.
+*/
+@media (max-width: 860px) {
+  body {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 55vh 1fr auto;
+    grid-template-areas: "header" "stage" "panel" "footer";
+  }
+}
+
+
+/* ─── 3. HEADER ───────────────────────────────────────────────────────────
+   Two zones (brand, mode tabs) laid out horizontally on desktop,
+   vertically on mobile. z-index:10 keeps it above any stage content that
+   bleeds over during rendering. */
+header {
+  grid-area: header;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  z-index: 10;
+  gap: 12px;
+}
+
+@media (max-width: 860px) {
+  header {
+    flex-direction: column;
+    align-items: stretch;   /* So the mode tabs row stretches full width */
+    padding: 12px 14px;
+    gap: 10px;
+  }
+}
+
+/* Brand zone: wordmark, tagline, capability badge, all on a baseline. */
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 860px) {
+  .brand {
+    /* Push badge to the right edge on mobile so it doesn't get crushed
+       against the wordmark. */
+    justify-content: space-between;
+    gap: 8px;
+  }
+}
+
+.brand-mark {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  font-style: italic;       /* Fraunces italic is characterful but legible */
+  white-space: nowrap;
+}
+
+/* The <em> inside .brand-mark reads "Symphony" — override the italic
+   Fraunces parent back to upright and recolor it accent-green. */
+.brand-mark em {
+  color: var(--accent);
+  font-style: normal;
+  font-weight: 500;
+}
+
+.brand-tag {
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Hide the tagline on mobile — there simply isn't room. */
+@media (max-width: 860px) {
+  .brand-tag { display: none; }
+}
+
+/* Pressure-capability badge (e.g. "Native Pressure" or "No Sensor").
+   Starts neutral; JS adds .native or .synthesised class for colouring. */
+.cap-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 8px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  cursor: help;    /* Cursor hints at the title tooltip */
+  transition: all 0.3s ease;
+}
+
+.cap-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+/* Green variant: real pressure hardware detected. */
+.cap-badge.native {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+/* Amber variant: no pressure sensor on this device. */
+.cap-badge.synthesised {
+  color: var(--warm);
+  border-color: var(--warm);
+  opacity: 0.8;
+}
+
+
+/* ─── Mode tabs ──
+   Pill-grouped buttons. Active button has a raised background and accent
+   text. On mobile the group stretches to full width. */
+.modes {
+  display: flex;
+  gap: 4px;
+  background: var(--surface);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+@media (max-width: 860px) {
+  .modes {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+.mode-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 6px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  flex: 1;              /* Equal width tabs */
+  white-space: nowrap;
+}
+
+.mode-btn:hover { color: var(--text); }
+
+.mode-btn.active {
+  background: var(--bg-raised);
+  color: var(--accent);
+  /* Subtle 1px outline so the active tab stays visibly distinct at a glance. */
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+
+/* ─── 4. STAGE ────────────────────────────────────────────────────────────
+   The canvas-bearing centre column. The grid background is purely CSS —
+   drawn via two crossed linear-gradients — so the canvas on top can be
+   fully cleared each frame without wiping the grid. This architecture
+   guarantees no ghost-pixel buildup from canvas alpha-blending.
+
+   Layer stack (z-index):
+      base (grid)       — background on .stage itself
+      ::before overlay  — vignette (radial fade to dark corners), z=1
+      #canvas           — touch visualisations, z=2
+      .stage-hint       — "touch the surface" prompt, z=3
+      .stage-overlay    — corner telemetry text, z=5
+      .rec-banner       — recording indicator, z=6 */
+.stage {
+  grid-area: stage;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
+  /* Two crossed gradients draw a 40×40 px grid of 1px lines. The
+     offset position:-1px -1px aligns grid lines with the top-left pixel. */
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 40px 40px;
+  background-position: -1px -1px;
+}
+
+/* Vignette: fades the grid out towards the corners for a spotlight feel. */
+.stage::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 0%, var(--bg) 100%);
+  pointer-events: none;   /* Must not intercept touch events */
+  z-index: 1;
+}
+
+/* The drawing canvas fills the stage. z-index places it above the vignette. */
+#canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+
+/* First-touch hint. Centred, faded, non-interactive. JS adds .hidden
+   after the first pointer event and the transition animates it out. */
+.stage-hint {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: var(--text-faint);
+  z-index: 3;
+  pointer-events: none;
+  transition: opacity 0.4s;
+}
+
+.stage-hint.hidden { opacity: 0; }
+
+.stage-hint-big {
+  font-family: var(--display);
+  font-weight: 300;
+  font-style: italic;
+  font-size: 36px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+  letter-spacing: -0.01em;
+}
+
+.stage-hint-small {
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+/* Corner overlay text (MODE · FREE, ACTIVE · 0, etc.). pointer-events:none
+   is critical — these must not block touch events from reaching the canvas. */
+.stage-overlay {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.overlay-tl { top: 16px; left: 20px; }
+.overlay-tr { top: 16px; right: 20px; text-align: right; }
+.overlay-bl { bottom: 16px; left: 20px; }
+.overlay-br { bottom: 16px; right: 20px; text-align: right; }
+
+/* On mobile the stage is smaller so overlays tuck tighter and shrink. */
+@media (max-width: 860px) {
+  .stage-overlay { font-size: 9px; }
+  .overlay-tl { top: 10px; left: 12px; }
+  .overlay-tr { top: 10px; right: 12px; }
+  .overlay-bl { bottom: 10px; left: 12px; }
+  .overlay-br { bottom: 10px; right: 12px; }
+  .stage-hint-big { font-size: 26px; }
+  .stage-hint-small { font-size: 10px; }
+}
+
+/* The accent-coloured live value in each overlay line. */
+.overlay-val {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* Recording banner — appears during gesture capture. JS toggles .active
+   to fade it in. The pulsing dot is animated via keyframes below. */
+.rec-banner {
+  position: absolute;
+  top: 50px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  background: rgba(245, 125, 125, 0.1);   /* Transparent wash of --warn */
+  border: 1px solid var(--warn);
+  padding: 6px 14px;
+  border-radius: 20px;
+  color: var(--warn);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.rec-banner.active { opacity: 1; }
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+/* pulse keyframes for the recording dot. */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+
+/* ─── 5. PANEL ────────────────────────────────────────────────────────────
+   Right-side sidebar on desktop (320px wide), full-width under stage on
+   mobile. The panel is the scroll container on mobile — its children must
+   not create their own scroll containers (see section 6). */
+.panel {
+  grid-area: panel;
+  background: var(--bg-raised);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 860px) {
+  .panel {
+    border-left: none;
+    border-top: 1px solid var(--border);
+    max-height: none;
+    /* min-height:0 is required for a flex/grid item to shrink below its
+       content size. Without it the panel will always be as tall as its
+       content and body's overflow:hidden will clip it. */
+    min-height: 0;
+    /* Re-enable vertical panning on this region only (body has touch-action:
+       none to support canvas drawing). */
+    touch-action: pan-y;
+    /* iOS-only: enables momentum scrolling. */
+    -webkit-overflow-scrolling: touch;
+    /* Prevent scroll bubbling up to the body/page. */
+    overscroll-behavior: contain;
+  }
+
+  .panel-section {
+    padding: 14px 16px 12px;
+  }
+
+  .panel-title {
+    margin-bottom: 10px;
+  }
+
+  .stat-row {
+    padding: 4px 0;
+    font-size: 12px;
+  }
+
+  /* IMPORTANT: Mobile layout shouldn't allow .touch-list to have its own scroll
+     container. Nested scroll containers on mobile create dead zones
+     where drag gestures get captured and never bubble to the panel. */
+  .touch-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
+.panel-section {
+  padding: 20px 20px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-section:last-child {
+  border-bottom: none;
+  /* Extra bottom padding so the last control isn't cut off by browser
+     UI (address bar, nav, home indicator). */
+  padding-bottom: 40px;
+}
+
+@media (max-width: 860px) {
+  .panel-section:last-child {
+    padding-bottom: 80px;
+  }
+}
+
+
+/* ─── 6. PANEL CONTENT MODULES ────────────────────────────────────────── */
+
+/* Section title row ("Live Telemetry", "Pointer Stream", etc.). Small
+   caps style with the title on the left and an optional badge on the right. */
+.panel-title {
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Variant for clickable titles (used by the Gesture Library collapse toggle). */
+.panel-title.clickable {
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color 0.15s;
+}
+
+.panel-title.clickable:hover { color: var(--text-dim); }
+
+/* Small ▾ chevron next to the collapsible title. Rotates when collapsed. */
+.collapse-chevron {
+  display: inline-block;
+  transition: transform 0.2s ease;
+  margin-right: 4px;
+  color: var(--text-dim);
+}
+
+.collapse-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+/* ── Collapsible body ──
+   CRITICAL BUG-FIX HISTORY: This rule had overflow:hidden + fixed
+   max-height on the EXPANDED state. On mobile browsers, such a
+   container inside a scrolling parent becomes a touch dead zone —
+   drag gestures get captured and never bubble to the panel scroller,
+   making content below unreachable. Fix: only apply overflow:hidden
+   when collapsed or during the transition. In the expanded steady
+   state, the element is visually and behaviourally transparent. */
+.collapsible-body {
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+  max-height: none;
+  opacity: 1;
+}
+
+.collapsible-body.collapsed {
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+}
+
+/* Applied briefly during the collapse animation so content doesn't spill
+   out while max-height is transitioning. Removed by JS once animation
+   completes. */
+.collapsible-body.animating {
+  overflow: hidden;
+  max-height: 2000px;
+}
+
+/* Small rounded pill badge in the top-right of a panel title. */
+.panel-title-badge {
+  font-size: 9px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+}
+
+/* "LIVE" variant — glows accent-green. */
+.panel-title-badge.live {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+
+/* ── Telemetry stat row ──
+   Label on the left, tabular-num value on the right. */
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.stat-label {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.stat-value {
+  color: var(--text);
+  /* tabular-nums keeps digits the same width so rapidly-changing
+     numbers don't wobble horizontally. */
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.stat-value.accent { color: var(--accent); }
+
+
+/* ── Touch list (live pointer rows) ── */
+.touch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 28px;
+}
+
+.touch-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 10px;
+  display: grid;
+  grid-template-columns: auto 1fr auto;   /* id | coords | pressure bar */
+  gap: 10px;
+  align-items: center;
+  animation: fadeIn 0.15s ease;
+}
+
+/* fade-in animation for new touch rows. */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.touch-id {
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 10px;
+}
+
+.touch-coords {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mini pressure bar. The fill element is width-animated by JS. */
+.touch-pressure-bar {
+  width: 40px;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.touch-pressure-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  transition: width 0.1s;
+}
+
+.touch-empty {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-style: italic;
+  text-align: center;
+  padding: 8px;
+}
+
+
+/* ── Gesture library ── */
+.gesture-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+  margin-top: 8px;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 860px) {
+  /* On mobile, the whole panel scrolls. Making the inner list its own
+     scroll container traps the outer drag gesture. Let it flow. */
+  .gesture-list {
+    max-height: none;
+    overflow-y: visible;
+  }
+}
+
+.gesture-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;   /* swatch | name | remove button */
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+}
+
+/* Mini preview of the saved gesture shape (rendered as a data-URL image). */
+.gesture-swatch {
+  width: 28px;
+  height: 28px;
+  background: var(--bg);
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
+.gesture-name {
+  color: var(--text);
+}
+
+.gesture-remove {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.gesture-remove:hover { color: var(--warn); }
+
+.gesture-empty {
+  color: var(--text-faint);
+  font-size: 10px;
+  font-style: italic;
+  padding: 8px 0;
+  text-align: center;
+}
+
+
+/* ── Prediction display (classify mode) ── */
+.predict-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  text-align: center;
+  margin-top: 10px;
+}
+
+.predict-label {
+  font-family: var(--display);
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--accent);
+  margin-bottom: 4px;
+  font-style: italic;
+}
+
+/* Dim + italic variant for "Draw to classify" / "Unknown gesture" states. */
+.predict-label.none {
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+.predict-confidence {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.predict-bar {
+  width: 100%;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+
+.predict-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  transition: width 0.2s;
+}
+
+
+/* ── Advanced controls ── */
+
+/* The outer toggle button that reveals/hides the group. Dashed border
+   distinguishes it from regular action buttons. */
+.adv-toggle {
+  background: transparent;
+  border: 1px dashed var(--border);
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  width: 100%;
+  transition: all 0.15s;
+}
+
+.adv-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent-dim);
+  border-style: solid;
+}
+
+/* The expanded controls group. display:none by default; .open class from
+   JS reveals it. */
+.adv-group {
+  display: none;
+  margin-top: 12px;
+}
+
+.adv-group.open { display: block; }
+
+/* A subgroup of related sliders (e.g. "Heatmap Accumulation"). Dashed
+   bottom border separates them visually. */
+.adv-subgroup {
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.adv-subgroup:last-of-type {
+  border-bottom: none;
+  margin-bottom: 4px;
+}
+
+.adv-subtitle {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 8px;
+}
+
+/* Container for one slider + its label + readout + hint. */
+.adv-ctrl {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.adv-ctrl-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 10px;
+}
+
+.adv-ctrl-label {
+  color: var(--text-dim);
+}
+
+.adv-ctrl-val {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* Range slider — custom styled because default browser sliders look
+   jarring against a dark theme. WebKit and Gecko need separate rules. */
+.adv-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  margin: 2px 0;
+}
+
+.adv-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  /* Double border: the outer bg-raised ring + inner accent halo */
+  border: 2px solid var(--bg-raised);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.adv-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--bg-raised);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Small italic description under each slider. */
+.adv-hint {
+  font-size: 9px;
+  color: var(--text-faint);
+  font-style: italic;
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+
+/* ─── 7. BUTTONS AND SHARED FORM ELEMENTS ─────────────────────────────── */
+
+.btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  width: 100%;
+}
+
+.btn:hover {
+  background: var(--border);
+  border-color: var(--text-dim);
+}
+
+/* Subtle press effect. */
+.btn:active { transform: translateY(1px); }
+
+/* Primary action (green fill). Used for "Save" in the modal. */
+.btn-primary {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 500;
+}
+
+.btn-primary:hover {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* Warning/destructive variant (red outline). Used for "Reset". */
+.btn-warn {
+  background: transparent;
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.btn-warn:hover {
+  background: var(--warn);
+  color: var(--bg);
+}
+
+/* Two-column button grid for paired action buttons. */
+.btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+
+/* ─── 8. MODAL (gesture naming dialog) ──────────────────────────────────
+   Full-screen dim backdrop with a centred card. JS adds .active on the
+   backdrop to show it. Clicking outside the card closes it. */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 11, 15, 0.85);
+  backdrop-filter: blur(4px);      /* Frosted glass behind the modal */
+  z-index: 100;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-backdrop.active { display: flex; }
+
+.modal {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+  width: 90%;
+  max-width: 360px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+.modal h3 {
+  font-family: var(--display);
+  font-weight: 400;
+  font-size: 20px;
+  margin-bottom: 6px;
+}
+
+.modal p {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.modal input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.modal input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+
+/* ─── 9. FOOTER ───────────────────────────────────────────────────────── */
+footer {
+  grid-area: footer;
+  padding: 10px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-raised);
+  font-size: 10px;
+  color: var(--text-faint);
+  display: flex;
+  justify-content: space-between;
+  letter-spacing: 0.08em;
+}
+
+footer a {
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+footer a:hover { color: var(--accent); }
+
+
+/* ─── 10. SCROLLBARS ──────────────────────────────────────────────────── */
+/* WebKit-only thin dark scrollbars. */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
+
+
+/* ─── 11. SPARKLINE ───────────────────────────────────────────────────── */
+/* Canvas element inside the telemetry section. JS draws pressure history
+   on it; CSS just sets the container box. */
+.sparkline {
+  width: 100%;
+  height: 40px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-top: 6px;
+}

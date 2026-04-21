@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<!--
+  ═══════════════════════════════════════════════════════════════════════════
+  TOUCH SYMPHONY — Smart Surface Playground
+  ═══════════════════════════════════════════════════════════════════════════
+
+  This is the main HTML shell. It defines the DOM structure for:
+    - The header bar (brand, pressure-sensor badge, mode tabs)
+    - The stage (canvas area where touches are visualised)
+    - The right-side panel (telemetry, pointer stream, gesture library,
+      advanced controls)
+    - The footer
+    - A modal dialog used when naming a recorded gesture
+
+  All styling lives in touch-symphony.css.
+  All behaviour lives in touch-symphony.js.
+
+  IDs referenced from JS are given prefixes that hint at their module:
+    ov-*        → stage overlay values
+    stat*       → live telemetry readouts
+    cap*        → pressure capability badge
+    gesture*    → gesture library UI
+    adv*        → advanced controls UI
+    predict*    → classification prediction display
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+
+  <!--
+    Viewport meta is critical on mobile.
+    - width=device-width: layout viewport matches device width (no desktop-site scaling)
+    - initial-scale=1.0:  don't zoom on load
+    - user-scalable=no:   prevent pinch-zoom so touch gestures aren't stolen by the
+                          browser's zoom handler. Required for multi-touch and
+                          pressure-sensing demos.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta name="description" content="An interactive smart surface sensing playground — tactile, pressure and gesture demonstration." />
+
+  <title>Touch Symphony — Smart Surface Playground</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="touch-symphony.css">
+</head>
+
+<body>
+
+<header>
+  <div class="brand">
+    <span class="brand-mark">Touch<em>Symphony</em></span>
+
+    <span class="brand-tag">Smart Surface Playground</span>
+
+    <!--
+      Pressure-capability badge. Starts as "detecting…" then JS updates
+      it to either "Native Pressure" (real hardware detected) or
+      "No Sensor" (device only reports binary touch).
+      The title attribute provides a hover/longpress tooltip explanation.
+    -->
+    <span class="cap-badge" id="capBadge" title="Pressure sensing capability of your device">
+      <span class="cap-dot"></span>
+      <span id="capBadgeText">detecting…</span>
+    </span>
+  </div>
+
+  <nav class="modes" role="tablist">
+    <button class="mode-btn active" data-mode="free"     role="tab">Free</button>
+    <button class="mode-btn"        data-mode="heatmap"  role="tab">Heatmap</button>
+    <button class="mode-btn"        data-mode="record"   role="tab">Record</button>
+    <button class="mode-btn"        data-mode="classify" role="tab">Classify</button>
+  </nav>
+</header>
+
+<!--
+  ─── STAGE ────────────────────────────────────────────────────────────────
+  The interactive drawing area. The grid background is a CSS layer on .stage
+  so the canvas itself can be fully cleared each frame without wiping the
+  grid — preventing any chance of accumulated ghost pixels.
+-->
+<main class="stage" id="stage">
+  <!-- Full-area transparent canvas. JS sizes it to match on mount/resize. -->
+  <canvas id="canvas"></canvas>
+
+  <!--
+    Four corner telemetry overlays sit on top of the canvas.
+    Each shows a label + a live value span that JS updates each frame.
+  -->
+  <div class="stage-overlay overlay-tl">
+    <div>MODE · <span class="overlay-val" id="ov-mode">FREE</span></div>
+  </div>
+  <div class="stage-overlay overlay-tr">
+    <div>ACTIVE · <span class="overlay-val" id="ov-active">0</span></div>
+  </div>
+  <div class="stage-overlay overlay-bl">
+    <div>SAMPLES · <span class="overlay-val" id="ov-samples">0</span></div>
+  </div>
+  <div class="stage-overlay overlay-br">
+    <div>PRESSURE · <span class="overlay-val" id="ov-pressure">0.00</span></div>
+  </div>
+
+  <!--
+    Recording banner: appears only during gesture capture in Record mode.
+    JS toggles the .active class to fade it in/out.
+  -->
+  <div class="rec-banner" id="recBanner">
+    <span class="rec-dot"></span>
+    <span>RECORDING GESTURE</span>
+  </div>
+
+  <!--
+    First-time hint overlay. Shown until the user touches the canvas
+    once, then faded out permanently.
+  -->
+  <div class="stage-hint" id="stageHint">
+    <div class="stage-hint-big">Touch the surface.</div>
+    <div class="stage-hint-small">Mouse, finger, or stylus</div>
+  </div>
+</main>
+
+<!--
+  ─── PANEL ────────────────────────────────────────────────────────────────
+  Right-side sidebar on desktop; stacks below the stage on mobile.
+  Contains four sections:
+    1. Live Telemetry          — always visible
+    2. Pointer Stream          — always visible
+    3. Gesture Library         — visible in record/classify modes only
+    4. Advanced Controls       — visible in heatmap mode only
+-->
+<aside class="panel">
+
+  <!--
+    ─ Section 1: Live Telemetry ─
+    Numerical overview of the current input state plus a sparkline of
+    recent max-pressure values. Badge flips between IDLE and LIVE based
+    on whether any pointer is active.
+  -->
+  <section class="panel-section">
+    <div class="panel-title">
+      <span>Live Telemetry</span>
+      <span class="panel-title-badge live" id="telemetryBadge">IDLE</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Active pointers</span>
+      <span class="stat-value accent" id="statActive">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Max pressure</span>
+      <span class="stat-value" id="statPressure">0.00</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Total samples</span>
+      <span class="stat-value" id="statSamples">0</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">Sample rate</span>
+      <span class="stat-value" id="statRate">— Hz</span>
+    </div>
+    <!--
+      Sparkline canvas — JS draws a rolling 120-sample pressure history
+      on this each animation frame.
+    -->
+    <canvas class="sparkline" id="sparkline" width="280" height="40"></canvas>
+  </section>
+
+  <!--
+    ─ Section 2: Pointer Stream ─
+    One row per currently-active pointer showing ID, coordinates, type
+    (mouse/touch/pen) and a live pressure bar.
+  -->
+  <section class="panel-section">
+    <div class="panel-title"><span>Pointer Stream</span></div>
+    <div class="touch-list" id="touchList">
+      <!-- Empty-state placeholder; JS replaces this on first pointerdown. -->
+      <div class="touch-empty">No active pointers</div>
+    </div>
+  </section>
+
+  <!--
+    ─ Section 3: Gesture Library ─
+    Hidden by default (display:none). ModeController shows it in
+    'record' and 'classify' modes.
+
+    The title is clickable to collapse/expand the body. Starts expanded.
+
+    Body contains:
+    - Prediction display (shown only in classify mode)
+    - List of saved gesture templates, each with swatch + name + remove button
+    - Clear / Export buttons
+  -->
+  <section class="panel-section" id="gestureSection" style="display:none;">
+    <div class="panel-title clickable" id="gestureCollapseToggle" role="button" aria-expanded="true">
+      <span><span class="collapse-chevron" id="gestureChevron">▾</span> Gesture Library</span>
+      <span class="panel-title-badge" id="gestureCount">0 stored</span>
+    </div>
+
+    <div class="collapsible-body" id="gestureBody">
+      <!--
+        Classification result display. Only visible in classify mode
+        (JS toggles display:none/block). Shows the predicted label,
+        confidence %, and a progress-style confidence bar.
+      -->
+      <div class="predict-box" id="predictBox" style="display:none;">
+        <div class="predict-label none" id="predictLabel">Draw to classify</div>
+        <div class="predict-confidence" id="predictConf">awaiting stroke</div>
+        <div class="predict-bar"><div class="predict-fill" id="predictFill" style="width:0%"></div></div>
+      </div>
+
+      <!-- List of saved gesture templates. Rendered by GesturePanel.renderList(). -->
+      <div class="gesture-list" id="gestureList">
+        <div class="gesture-empty">Switch to Record mode to capture a gesture</div>
+      </div>
+
+      <!-- Action buttons: wipe all saved gestures, or export them as JSON. -->
+      <div class="btn-row">
+        <button class="btn" id="btnClearGestures">Clear</button>
+        <button class="btn" id="btnExport">Export</button>
+      </div>
+    </div>
+  </section>
+
+  <!--
+    ─ Section 4: Advanced Controls ─
+    Hidden by default. ModeController shows this ONLY in heatmap mode,
+    since every tunable here affects heatmap behaviour specifically.
+
+    The button expands the .adv-group body. Inside are four subgroups of
+    sliders. Every slider has:
+      data-cfg="<configKey>"  — which Config value it controls
+      data-val="<configKey>"  — on its readout span so JS can update it
+
+    JS auto-wires all sliders: no per-slider handlers are needed.
+  -->
+  <section class="panel-section" id="advSection" style="display:none;">
+    <button class="adv-toggle" id="advToggle">▸ Advanced Controls</button>
+
+    <div class="adv-group" id="advGroup">
+
+      <!-- ── Heatmap Accumulation ── -->
+      <div class="adv-subgroup">
+        <div class="adv-subtitle">Heatmap Accumulation</div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Base deposit rate</span>
+            <span class="adv-ctrl-val" data-val="heatAccumBase">0.90</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="heatAccumBase" min="0.1" max="2.0" step="0.05" />
+          <div class="adv-hint">Heat added per move event, before pressure/velocity/dwell modifiers.</div>
+        </div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Accumulation cap</span>
+            <span class="adv-ctrl-val" data-val="heatAccumCap">8.0</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="heatAccumCap" min="2" max="20" step="0.5" />
+          <div class="adv-hint">Maximum value a single cell can reach. Higher = more room to stack.</div>
+        </div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Decay rate</span>
+            <span class="adv-ctrl-val" data-val="heatDecay">0.9965</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="heatDecay" min="0.98" max="0.9995" step="0.0005" />
+          <div class="adv-hint">Per-frame multiplier. Closer to 1.0 = slower fade.</div>
+        </div>
+      </div>
+
+      <!-- ── Rendering ── -->
+      <div class="adv-subgroup">
+        <div class="adv-subtitle">Rendering</div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Min alpha floor</span>
+            <span class="adv-ctrl-val" data-val="heatMinAlpha">0.25</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="heatMinAlpha" min="0" max="0.6" step="0.025" />
+          <div class="adv-hint">Baseline opacity for fresh cells. Higher = low-activity cells more visible.</div>
+        </div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Fade threshold</span>
+            <span class="adv-ctrl-val" data-val="heatFadeThresh">0.30</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="heatFadeThresh" min="0.05" max="0.9" step="0.025" />
+          <div class="adv-hint">When v drops below peak × this, alpha tapers continuously to 0.</div>
+        </div>
+      </div>
+
+      <!-- ── Velocity Weighting ── -->
+      <div class="adv-subgroup">
+        <div class="adv-subtitle">Velocity Weighting</div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Strength</span>
+            <span class="adv-ctrl-val" data-val="velocityWeight">1.00</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="velocityWeight" min="0" max="1.5" step="0.05" />
+          <div class="adv-hint">0 = ignored. 1 = slow drags deposit up to 3× more than fast swipes.</div>
+        </div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Fast threshold (px/ms)</span>
+            <span class="adv-ctrl-val" data-val="velocityFastPx">3.0</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="velocityFastPx" min="0.5" max="8" step="0.25" />
+          <div class="adv-hint">Speed at which weighting reaches its minimum. Lower = more sensitive.</div>
+        </div>
+      </div>
+
+      <!-- ── Dwell Weighting ── -->
+      <div class="adv-subgroup">
+        <div class="adv-subtitle">Dwell Weighting</div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Strength</span>
+            <span class="adv-ctrl-val" data-val="dwellWeight">1.00</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="dwellWeight" min="0" max="1.5" step="0.05" />
+          <div class="adv-hint">0 = ignored. Rewards lingering on the same cell.</div>
+        </div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Max bonus</span>
+            <span class="adv-ctrl-val" data-val="dwellMaxBonus">0.80</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="dwellMaxBonus" min="0.1" max="2.0" step="0.05" />
+          <div class="adv-hint">Extra multiplier at peak dwell (0.8 = 1.8× deposit).</div>
+        </div>
+
+        <div class="adv-ctrl">
+          <div class="adv-ctrl-row">
+            <span class="adv-ctrl-label">Ramp time (ms)</span>
+            <span class="adv-ctrl-val" data-val="dwellRampMs">400</span>
+          </div>
+          <input type="range" class="adv-slider" data-cfg="dwellRampMs" min="100" max="2000" step="50" />
+          <div class="adv-hint">How long on a cell to reach max dwell bonus.</div>
+        </div>
+      </div>
+
+      <!-- Reset restores every slider to its factory default. Hide collapses the whole group. -->
+      <div class="btn-row">
+        <button class="btn btn-warn" id="advReset">Reset</button>
+        <button class="btn" id="advHide">Hide</button>
+      </div>
+    </div>
+  </section>
+
+</aside>
+
+<!--
+  ─── FOOTER ───────────────────────────────────────────────────────────────
+  Live coordinate readout on the left, GitHub profile link on the right.
+-->
+<footer>
+  <span>Touch Symphony · <span id="coordFooter">(0, 0)</span></span>
+  <span><a href="https://github.com/MohaKalaf" target="_blank" rel="noopener">github.com/MohaKalaf</a></span>
+</footer>
+
+<!--
+  ─── MODAL ────────────────────────────────────────────────────────────────
+  Gesture-naming dialog. Shown by JS after a stroke is captured in Record
+  mode. Saving stores the gesture; discarding throws it away.
+-->
+<div class="modal-backdrop" id="modal">
+  <div class="modal">
+    <h3>Name this gesture</h3>
+    <p>Give it a short, memorable label. You'll use this to train the classifier.</p>
+    <input type="text" id="gestureNameInput" placeholder="e.g. circle, swipe, Z" maxlength="20" autocomplete="off" />
+    <div class="modal-actions">
+      <button class="btn" id="modalCancel">Discard</button>
+      <button class="btn btn-primary" id="modalSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script src="touch-symphony.js"></script>
+
+</body>
+</html>
