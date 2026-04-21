@@ -1085,8 +1085,8 @@ const GesturePanel = (() => {
   // Update the prediction display with a classification result.
   // result = { label, confidence } | null
   function updatePrediction(result) {
-    // Confidence under 40% is not siginficant enough, therefore drop it.
-    if (!result || result.confidence < 0.4) {
+    // Confidence under 20% is not siginficant enough, therefore drop it.
+    if (!result || result.confidence < 0.2) {
       predictLabel.textContent = 'Unknown gesture';
       predictLabel.classList.add('none');
       predictConf.textContent = 'no match';
