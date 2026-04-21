@@ -849,12 +849,34 @@ const GestureClassifier = (() => {
   //   input:  a normalised point array (from GestureProcessor.normalise)
   //   returns: null if no templates stored, else:
   //            { label, confidence (0-1), distance }
+  //
+  // DIRECTION INVARIANCE:
+  // Base $1 compares candidate point[i] to template point[i], so a stroke
+  // drawn in the reverse direction (e.g. counter-clockwise circle vs
+  // clockwise) gets every point-pair misaligned and fails to match. The
+  // $N recognizer solves this by storing reversed copies of every template
+  // at save time; $P solves it by abandoning point ORDER entirely in
+  // favour of point-cloud matching.
+  //
+  // The pragmatic fix that fits cleanly into $1 is to compare the candidate
+  // against each template in BOTH orientations and keep the better score.
+  // Euclidean distance is symmetric, so reversing the candidate once is
+  // equivalent to (and cheaper than) reversing every template. O(2n)
+  // classification cost with zero extra storage.
   function predict(normalisedPoints) {
     if (templates.length === 0) return null;
 
+    // Pre-compute the reversed candidate once, outside the template loop.
+    const reversed = normalisedPoints.slice().reverse();
+
     let best = { label: null, distance: Infinity, index: -1 };
     templates.forEach((tpl, i) => {
-      const d = GestureProcessor.distance(normalisedPoints, tpl.points);
+      // Score the candidate both forwards and backwards against this template.
+      // Whichever orientation matches better wins — this is what makes the
+      // matcher direction-invariant.
+      const dForward = GestureProcessor.distance(normalisedPoints, tpl.points);
+      const dReverse = GestureProcessor.distance(reversed, tpl.points);
+      const d = Math.min(dForward, dReverse);
       if (d < best.distance) best = { label: tpl.label, distance: d, index: i };
     });
 
@@ -1085,16 +1107,17 @@ const GesturePanel = (() => {
   // Update the prediction display with a classification result.
   // result = { label, confidence } | null
   function updatePrediction(result) {
-    // Confidence under 20% is not siginficant enough, therefore drop it.
+    // Confidence under 20% is meaningless.
     if (!result || result.confidence < 0.2) {
-      predictLabel.textContent = 'Unknown gesture';
+      predictLabel.textContent = 'Unknown gesture - closest: ' + result.label;
       predictLabel.classList.add('none');
-      predictConf.textContent = 'no match';
-      predictFill.style.width = '0%';
-      return;
+      // predictConf.textContent = 'no match - closest: ' + result.label;
+      // predictFill.style.width = '0%';
+      // return;
+    } else {
+      predictLabel.textContent = result.label;
+      predictLabel.classList.remove('none');
     }
-    predictLabel.textContent = result.label;
-    predictLabel.classList.remove('none');
     predictConf.textContent = `confidence ${(result.confidence * 100).toFixed(0)}%`;
     predictFill.style.width = (result.confidence * 100) + '%';
   }
